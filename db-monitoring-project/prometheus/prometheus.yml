@@ -1,0 +1,13 @@
+global:
+  scrape_interval: 5s
+
+scrape_configs:
+  # Метрики від нашого Python-навантажувача
+  - job_name: 'db-loader'
+    static_configs:
+      - targets: ['db-loader:8000']
+
+  # Метрики стану самої PostgreSQL
+  - job_name: 'postgres'
+    static_configs:
+      - targets: ['postgres_exporter:9187']

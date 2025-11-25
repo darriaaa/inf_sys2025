@@ -1,0 +1,115 @@
+version: "3.9"
+
+services:
+  # 0. База даних PostgreSQL
+  db:
+    image: postgres:15
+    platform: linux/amd64
+    container_name: db
+    restart: always
+    environment:
+      POSTGRES_USER: appuser
+      POSTGRES_PASSWORD: apppass
+      POSTGRES_DB: appdb
+    ports:
+      - "5432:5432"
+    volumes:
+      - db_data:/var/lib/postgresql/data
+    networks:
+      - monitor-net
+
+  # 1. Python-сервіс, який генерує навантаження на БД і віддає метрики
+  db-loader:
+    build: ./db-loader
+    container_name: db-loader
+    restart: always
+    depends_on:
+      - db
+    networks:
+      - monitor-net
+
+  # Експортер метрик PostgreSQL для Prometheus
+  postgres_exporter:
+    image: prometheuscommunity/postgres-exporter
+    container_name: postgres_exporter
+    restart: always
+    environment:
+      DATA_SOURCE_NAME: "postgresql://appuser:apppass@db:5432/appdb?sslmode=disable"
+    depends_on:
+      - db
+    ports:
+      - "9187:9187"
+    networks:
+      - monitor-net
+
+  # 2–3. Prometheus (збір і зберігання метрик)
+  prometheus:
+    image: prom/prometheus
+    container_name: prometheus
+    restart: always
+    volumes:
+      - ./prometheus/prometheus.yml:/etc/prometheus/prometheus.yml
+      - prometheus_data:/prometheus
+    command:
+      - --config.file=/etc/prometheus/prometheus.yml
+      - --storage.tsdb.path=/prometheus
+    ports:
+      - "9090:9090"
+    networks:
+      - monitor-net
+
+  # 4. Grafana для візуалізації
+  grafana:
+    image: grafana/grafana
+    container_name: grafana
+    restart: always
+    depends_on:
+      - prometheus
+    environment:
+      - GF_SECURITY_ADMIN_USER=admin
+      - GF_SECURITY_ADMIN_PASSWORD=admin
+      - GF_SERVER_ROOT_URL=http://localhost/grafana/
+      - GF_SERVER_SERVE_FROM_SUB_PATH=true
+    ports:
+      - "3000:3000"
+    volumes:
+      - grafana_data:/var/lib/grafana
+      - ./grafana/provisioning:/etc/grafana/provisioning
+    networks:
+      - monitor-net
+
+
+
+  # 5. Сервер авторизації (Python + SQLite)
+  auth-server:
+    build: ./auth-server
+    container_name: auth-server
+    restart: always
+    ports:
+      - "5000:5000"
+    networks:
+      - monitor-net
+
+  # 6. Nginx як єдина точка входу + перевірка авторизації
+  nginx:
+    image: nginx:latest
+    container_name: nginx
+    restart: always
+    depends_on:
+      - grafana
+      - prometheus
+      - auth-server
+    ports:
+      - "80:80"
+    volumes:
+      - ./nginx/nginx.conf:/etc/nginx/nginx.conf:ro
+    networks:
+      - monitor-net
+
+networks:
+  monitor-net:
+
+volumes:
+  db_data:
+  prometheus_data:
+  grafana_data:
